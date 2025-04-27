@@ -14,17 +14,6 @@ init(autoreset=True)
 # Nome e Versão
 program_name = f"{Fore.RED}INFERNAL LCS {Fore.YELLOW}v1.0{Style.RESET_ALL}"
 
-# ASCII Art Infernal
-infernal_logo = f"""{Fore.RED}
-      ▄████████    ▄████████    ▄████████  ▄████████  ▄█      ███
-     ███    ███   ███    ███   ███    ███ ███    ███ ███  ▀████████
-     ███    █▀    ███    █▀    ███    █▀  ███    █▀  ███▌    ▀███▀
-    ▄███▄▄▄       ███         ▄███▄▄▄     ███        ███▌     ███
-   ▀▀███▀▀▀     ▀███████████ ▀▀███▀▀▀     ███        ███▌     ███
-     ███    █▄           ███   ███    █▄  ███    █▄  ███      ███
-     ███    ███    ▄█    ███   ███    ███ ███    ███ ███      ███
-     ██████████  ▄████████▀    ██████████ ████████▀  █▀      ▄████▀
-
         {Fore.YELLOW}>>>>> INFERNAL LCS COMMAND & CONTROL PANEL <<<<<{Style.RESET_ALL}
 """
 
